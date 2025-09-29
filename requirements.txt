@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+openai
+python-dotenv
+chromadb
+faiss-cpu
+beautifulsoup4
+lxml
+tiktoken
+playwright
+requests
+httpx
+fastmcp

@@ -1,0 +1,20 @@
+2025-09-25 13:23:48,649 - INFO - --- MCP 스크립트 실행 시작 ---
+2025-09-25 13:23:48,649 - INFO - Python 실행 경로: /Users/fin01-hjshim/Desktop/my-project/megazone-cloud-mcp/venv/bin/python
+2025-09-25 13:23:48,649 - INFO - 현재 작업 디렉토리: /Users/fin01-hjshim
+2025-09-25 13:23:48,649 - INFO - 프로젝트 루트 추가: /Users/fin01-hjshim/Desktop/my-project/megazone-cloud-mcp
+2025-09-25 13:23:48,649 - INFO - 'core.agent' 임포트 시도...
+2025-09-25 13:23:49,391 - INFO - Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-09-25 13:23:49,522 - INFO - 'core.agent' 임포트 성공
+2025-09-25 13:23:49,524 - INFO - '.env' 파일 로드 시도...
+2025-09-25 13:23:49,524 - INFO - '.env' 파일 로드 완료
+2025-09-25 13:23:49,524 - INFO - 'mcp.server.fastmcp' 임포트 시도...
+2025-09-25 13:23:49,621 - INFO - 'mcp.server.fastmcp' 임포트 성공
+2025-09-25 13:23:49,625 - INFO - 'FastMCP' 인스턴스 생성 완료
+2025-09-25 13:23:49,626 - INFO - 'ask_agent' tool 정의 완료
+2025-09-25 13:23:49,626 - INFO - '__main__' 블록 진입. app.run_mcp() 호출 시도...
+2025-09-25 13:23:49,626 - ERROR - 스크립트 실행 중 치명적인 오류 발생
+Traceback (most recent call last):
+  File "/Users/fin01-hjshim/Desktop/my-project/megazone-cloud-mcp/mcp_entry.py", line 59, in <module>
+    app.run_mcp()
+    ^^^^^^^^^^^
+AttributeError: 'FastMCP' object has no attribute 'run_mcp'

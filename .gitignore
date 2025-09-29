@@ -1,0 +1,20 @@
+# Environments
+.env
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Vector Database
+vector_db/
+
+# IDE specific
+.idea/
+.vscode/
+
+# OS specific
+.DS_Store
