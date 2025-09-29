@@ -5,7 +5,7 @@ from typing import Optional
 from pydantic import BaseModel
 from fastapi import FastAPI
 from core.agent import run_agent
-from core.rag_builder import build_rag_from_path, reset_rag_database
+from core.rag_builder import build_rag_from_path
 from mcp_entry import mcp_server
 from dotenv import load_dotenv
 load_dotenv()
