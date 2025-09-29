@@ -13,7 +13,8 @@ from openai import AsyncOpenAI
 
 # --- 새로운 임포트 ---
 # 헤드리스 브라우저 스크래핑 관련 함수들을 가져옵니다.
-from core.scraper import get_all_page_urls, get_page_html
+# get_page_html 대신 scrape_dynamic_content를 사용합니다.
+from core.scraper import get_all_page_urls, scrape_dynamic_content
 
 # --- 상수 정의 ---
 VECTOR_DB_PATH = "./vector_db"
@@ -85,12 +86,10 @@ async def build_rag_from_path(site_url: str) -> Dict[str, Any]:
     processed_files_count = 0
     skipped_files_count = 0
     for page_url in all_page_urls:
-        html_content = await get_page_html(page_url)
-        if not html_content:
-            continue
-
-        text_content = _extract_text_from_html(html_content)
+        # get_page_html과 _extract_text_from_html을 합친 새 함수를 호출합니다.
+        text_content = await scrape_dynamic_content(page_url)
         if not text_content.strip():
+            print(f"Skipped (no content): {page_url}")
             continue
 
         content_hash = _generate_content_hash(text_content)
@@ -144,6 +143,8 @@ def _extract_text_from_html(html_content: str) -> str:
     """
     BeautifulSoup4를 사용하여 HTML 콘텐츠에서 불필요한 태그를 제거하고
     본문 텍스트만 추출하여 반환합니다.
+    [주의] 이 함수는 동적 탭 콘텐츠 처리를 위해 더 이상 메인 로직에서 사용되지 않습니다.
+    대신 scraper.py의 scrape_dynamic_content 함수를 사용해야 합니다.
     """
     soup = BeautifulSoup(html_content, 'lxml')
 

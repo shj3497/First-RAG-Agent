@@ -100,6 +100,77 @@ async def get_all_page_urls(site_url: str) -> List[str]:
         return []
 
 
+async def scrape_dynamic_content(url: str) -> str:
+    """
+    Playwright를 사용하여 페이지에 접속하고, 동적으로 생성되는 콘텐츠(탭 등)를 포함한
+    전체 텍스트를 추출하여 반환합니다.
+    """
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        try:
+            await page.goto(url, wait_until="networkidle")
+
+            # 1. 탭이 아닌 일반 콘텐츠를 먼저 추출합니다.
+            #    탭 컨테이너는 제외하여 중복 추출을 방지합니다.
+            main_content_locator = page.locator(
+                "body:not(:has([data-tab-title]))")
+            if await main_content_locator.count() > 0:
+                # 불필요한 태그를 제거하기 위해 BeautifulSoup을 한 번 더 사용합니다.
+                main_html = await main_content_locator.inner_html()
+                main_text = _extract_text_from_html_fragment(main_html)
+            else:
+                main_text = ""
+
+            # 2. 동적 탭 콘텐츠를 추출합니다.
+            tab_texts = []
+            tab_titles = await page.locator('[data-tab-title]').all()
+
+            for title_element in tab_titles:
+                tab_id = await title_element.get_attribute('data-tab-title')
+                if not tab_id:
+                    continue
+
+                try:
+                    tab_title_text = await title_element.inner_text()
+                    await title_element.click()
+
+                    content_locator = page.locator(
+                        f'[data-tab-content="{tab_id}"]')
+                    await content_locator.wait_for(state='visible', timeout=5000)
+
+                    # 탭 콘텐츠 영역의 HTML을 가져와서 텍스트만 추출합니다.
+                    content_html = await content_locator.inner_html()
+                    tab_content_text = _extract_text_from_html_fragment(
+                        content_html)
+
+                    # 제목과 내용을 합쳐 문맥을 유지하는 텍스트 블록을 생성합니다.
+                    combined_text = f"## {tab_title_text}\n\n{tab_content_text}"
+                    tab_texts.append(combined_text)
+                except Exception as e:
+                    print(
+                        f"Warning: Tab scraping failed for url '{url}' and tab_id '{tab_id}'. Error: {e}")
+
+            return "\n\n".join([main_text] + tab_texts)
+
+        except Exception as e:
+            print(f"Could not scrape dynamic content from {url}: {e}")
+            return ""
+        finally:
+            await browser.close()
+
+
+def _extract_text_from_html_fragment(html_content: str) -> str:
+    """
+    BeautifulSoup4를 사용하여 HTML 조각에서 텍스트만 추출합니다.
+    (기존 rag_builder._extract_text_from_html과 유사하지만 재사용을 위해 여기로 이동)
+    """
+    soup = BeautifulSoup(html_content, 'lxml')
+    for element in soup(["script", "style", "nav", "footer", "header"]):
+        element.decompose()
+    return soup.get_text(separator=" ", strip=True)
+
+
 async def get_page_html(url: str) -> str:
     """
     Playwright를 사용하여 지정된 URL의 페이지에 접속하고,
