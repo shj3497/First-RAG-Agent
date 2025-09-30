@@ -3,6 +3,7 @@ import os
 import uuid
 import hashlib
 from typing import List, Dict, Any
+import pickle
 
 # --- 새로운 임포트 ---
 import chromadb
@@ -10,6 +11,8 @@ import tiktoken
 import openai
 from bs4 import BeautifulSoup
 from openai import AsyncOpenAI
+from rank_bm25 import BM25Okapi
+from konlpy.tag import Okt  # Mecab 대신 Okt를 임포트
 
 # --- 새로운 임포트 ---
 # 헤드리스 브라우저 스크래핑 관련 함수들을 가져옵니다.
@@ -19,6 +22,9 @@ from core.scraper import get_all_page_urls, scrape_dynamic_content
 # --- 상수 정의 ---
 VECTOR_DB_PATH = "./vector_db"
 VECTOR_DB_COLLECTION_NAME = "mcp_rag_collection"
+# BM25 인덱스 파일 경로를 상수로 추가합니다.
+BM25_INDEX_PATH = os.path.join(VECTOR_DB_PATH, "bm25_index.pkl")
+
 # OpenAI 임베딩 모델과 Tiktoken 인코더 이름을 상수로 관리합니다.
 EMBEDDING_MODEL = "text-embedding-3-small"
 ENCODING_NAME = "cl100k_base"
@@ -122,10 +128,64 @@ async def build_rag_from_path(site_url: str) -> Dict[str, Any]:
 
         processed_files_count += 1
 
+    # --- 3. 모든 DB 작업 완료 후 BM25 인덱스 재생성 ---
+    _build_and_save_bm25_index()
+
     return {
         "status": "success",
         "message": f"RAG 인덱스 빌드 완료. 처리: {processed_files_count}개, 변경 없음: {skipped_files_count}개, 삭제: {len(pages_to_delete)}개.",
     }
+
+
+def _build_and_save_bm25_index():
+    """
+    ChromaDB에 저장된 모든 문서를 기반으로 BM25 키워드 검색 인덱스를 생성하고 파일로 저장합니다.
+    RAG 빌드 프로세스의 마지막에 호출되어 항상 최신 상태를 유지하도록 합니다.
+    """
+
+    print("🔄 BM25 인덱스를 재생성합니다...")
+    # .get()의 include 파라미터에서 'ids'를 제거합니다. ids는 기본적으로 반환됩니다.
+    all_items = collection.get(include=['metadatas'])
+    if not all_items or not all_items['ids']:
+        print("⚠️ DB에 데이터가 없어 BM25 인덱스를 생성할 수 없습니다.")
+        return
+
+    # --- 안정성 강화를 위한 필터링 로직 추가 ---
+    # BM25 인덱싱을 위해 ID와 청크 텍스트를 추출하되, 내용이 없는 청크는 제외합니다.
+    valid_ids = []
+    valid_chunks = []
+    for i, metadata in enumerate(all_items['metadatas']):
+        chunk_text = metadata.get('chunk_text', '').strip()
+        if chunk_text:  # 텍스트가 비어있지 않은 경우에만 추가
+            valid_ids.append(all_items['ids'][i])
+            valid_chunks.append(chunk_text)
+
+    if not valid_chunks:
+        print("⚠️ 유효한 내용이 있는 문서가 없어 BM25 인덱스를 생성할 수 없습니다.")
+        return
+
+    # --- 토큰화 방식 변경 ---
+    # Okt 형태소 분석기를 사용하여 코퍼스를 토큰화합니다.
+    print("Okt 형태소 분석기를 사용하여 토큰화를 시작합니다...")
+    okt = Okt()
+    # morphs 대신 nouns를 사용하여 명사만 추출, 검색 성능 향상
+    tokenized_corpus = [okt.nouns(chunk) for chunk in valid_chunks]
+    print("토큰화 완료.")
+
+    # BM25 인덱스 생성
+    bm25 = BM25Okapi(tokenized_corpus)
+
+    # 검색 시 원본 청크를 조회하기 위해 인덱스와 원본 데이터를 함께 저장합니다.
+    bm25_data = {
+        "bm25_index": bm25,
+        "corpus_ids": valid_ids,       # 필터링된 ID 리스트 사용
+        "corpus_chunks": valid_chunks  # 필터링된 청크 리스트 사용
+    }
+
+    with open(BM25_INDEX_PATH, "wb") as f:
+        pickle.dump(bm25_data, f)
+
+    print(f"✅ BM25 인덱스 생성 완료. {len(valid_chunks)}개 문서 처리. ({BM25_INDEX_PATH})")
 
 
 def _generate_content_hash(content: str) -> str:

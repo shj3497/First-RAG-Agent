@@ -11,3 +11,10 @@ playwright
 requests
 httpx
 fastmcp
+langchain
+langchain_openai
+langgraph
+langchain_core
+numpy
+rank_bm25
+konlpy
