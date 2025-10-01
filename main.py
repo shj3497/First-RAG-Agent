@@ -1,13 +1,14 @@
 # main.py
 import os
-import uuid  # UUID 모듈 추가
+import uuid
 from typing import Optional
 from pydantic import BaseModel
 from fastapi import FastAPI
 from core.agent import run_agent
 from core.rag_builder import build_rag_from_path
-from mcp_entry import mcp_server
 from dotenv import load_dotenv
+import uvicorn
+
 load_dotenv()
 
 
@@ -44,11 +45,6 @@ class RagBuildRequest(BaseModel):
 # FastAPI 인스턴스를 생성하여 웹 애플리케이션을 초기화합니다.
 # 이 'app' 변수를 uvicorn이 실행하여 서버를 켭니다.
 
-# 1. MCP 서버로부터 ASGI 애플리케이션 생성
-# transport="streamable-http"를 명시하여 올바른 통신 방식을 사용하도록 설정합니다.
-mcp_app = mcp_server.http_app(path="/", transport="streamable-http")
-
-# 2. FastAPI 앱에 MCP의 lifespan을 연결하여 생성
 app = FastAPI(
     title="AI Agent Server API",
     version="1.0.0",
@@ -59,11 +55,7 @@ app = FastAPI(
 - **채팅 기능**: `sessionId`를 통해 대화의 맥락을 유지합니다.
 - **MCP 연동**: Cursor와 같은 외부 도구와 연동할 수 있습니다.
     """,
-    lifespan=mcp_app.lifespan
 )
-
-# 3. FastAPI 앱에 MCP 애플리케이션을 /mcp 경로로 마운트
-app.mount("/mcp", mcp_app)
 
 
 # --- API 엔드포인트(라우터) 정의 ---
@@ -107,3 +99,8 @@ def read_root():
     브라우저에서 서버 주소로 접속했을 때 이 메시지가 보이면 서버가 켜진 것입니다.
     """
     return {"message": "AI Agent Server is running."}
+
+
+if __name__ == "__main__":
+    print("FastAPI 기반 REST API 서버를 실행합니다. (http://127.0.0.1:8000)")
+    uvicorn.run(app, host="127.0.0.1", port=8000)

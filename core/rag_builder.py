@@ -20,7 +20,18 @@ from konlpy.tag import Okt  # Mecab 대신 Okt를 임포트
 from core.scraper import get_all_page_urls, scrape_dynamic_content
 
 # --- 상수 정의 ---
-VECTOR_DB_PATH = "./vector_db"
+# 이 파일(rag_builder.py)의 실제 위치를 기준으로 프로젝트 루트 디렉토리의 절대 경로를 계산합니다.
+# 이렇게 하면 스크립트가 어떤 환경에서 실행되더라도 항상 프로젝트 폴더를 정확히 가리킬 수 있습니다.
+# os.path.realpath(__file__): 현재 파일의 실제 절대 경로 (.../core/rag_builder.py)
+# os.path.dirname(...): 디렉토리 경로만 추출 (.../core)
+# os.path.dirname(...): 한 단계 상위 디렉토리로 이동 (...) -> 최종적으로 프로젝트 루트 경로
+PROJECT_ROOT_PATH = os.path.dirname(
+    os.path.dirname(os.path.realpath(__file__)))
+VECTOR_DB_PATH = os.path.join(PROJECT_ROOT_PATH, "vector_db")
+
+# VECTOR_DB_PATH 디렉토리가 존재하지 않으면 생성합니다. (최초 실행 시 필요할 수 있음)
+os.makedirs(VECTOR_DB_PATH, exist_ok=True)
+
 VECTOR_DB_COLLECTION_NAME = "mcp_rag_collection"
 # BM25 인덱스 파일 경로를 상수로 추가합니다.
 BM25_INDEX_PATH = os.path.join(VECTOR_DB_PATH, "bm25_index.pkl")
