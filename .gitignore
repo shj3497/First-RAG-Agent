@@ -10,7 +10,7 @@ __pycache__/
 *.pyd
 
 # Vector Database
-vector_db/
+# vector_db/
 
 # IDE specific
 .idea/
