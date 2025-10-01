@@ -2,12 +2,19 @@
 from langgraph.graph import END, StateGraph
 from typing import List, TypedDict
 
-from langchain_core.messages import BaseMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 
 from core.tools.rag_search import RagSearchTool
 from core.base_agent import get_chat_model
+from core.history import get_history_store
+
+
+# --- 0. 상수 정의 ---
+# 대화 기록 컨텍스트 윈도우의 최대 메시지 수 (질문+답변)
+# 짝수로 설정하는 것을 권장 (질문/답변 쌍)
+MAX_CONVERSATION_HISTORY_MESSAGES = 20
 
 
 # --- 1. Graph State 정의 ---
@@ -19,10 +26,51 @@ class GraphState(TypedDict):
     generation: str  # LLM이 생성한 답변
     grade: str  # 답변 평가 결과 (useful / not useful)
     iterations: int  # 재시도 횟수 (무한 루프 방지용)
+    chat_history: List[dict]  # 이전 대화 기록
+    is_new_topic: bool  # 현재 질문이 새로운 주제인지 여부
 
 
 # --- 2. 노드(Node) 함수 정의 ---
 # 각 노드는 그래프의 한 단계를 나타내며, 특정 작업을 수행하는 함수입니다.
+
+async def classify_topic_node(state: GraphState):
+    """
+    새로운 질문이 이전 대화의 주제와 이어지는지를 판단하는 노드입니다.
+    """
+    print("--- 🤔 0. 주제 분류 ---")
+    question = state["question"]
+    chat_history = state.get("chat_history", [])
+
+    if not chat_history:
+        print("💬 이전 대화 기록이 없어 새로운 주제로 판단합니다.")
+        return {"is_new_topic": True}
+
+    # 대화 기록을 간단한 문자열로 변환
+    history_str = "\n".join(
+        [f'{msg.get("role")}: {msg.get("content")}' for msg in chat_history]
+    )
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system",
+         "당신은 대화의 주제를 분류하는 AI입니다. "
+         "주어진 '이전 대화'와 '새로운 질문'을 보고, 새로운 질문이 이전 대화의 주제를 이어가는지 아니면 완전히 새로운 주제인지 판단해주세요. "
+         "답변은 'yes' (주제가 이어짐) 또는 'no' (새로운 주제) 로만 간결하게 해야 합니다."),
+        ("user",
+         f"## 이전 대화 (최대 {MAX_CONVERSATION_HISTORY_MESSAGES // 2}쌍):\n{history_str}\n\n"
+         f"## 새로운 질문:\n{question}\n\n"
+         "이 새로운 질문은 이전 대화의 주제와 관련이 있습니까? (yes / no)")
+    ])
+    llm = get_chat_model(temperature=0)
+    chain = prompt | llm
+    result = await chain.ainvoke({})
+
+    if "no" in result.content.lower():
+        print("💬 LLM이 새로운 주제로 판단했습니다.")
+        return {"is_new_topic": True}
+    else:
+        print("💬 LLM이 기존 주제가 이어지는 것으로 판단했습니다.")
+        return {"is_new_topic": False}
+
 
 async def retrieve_documents_node(state: GraphState):
     """
@@ -49,14 +97,17 @@ async def generate_answer_node(state: GraphState):
     print("--- ✍️ 2. 답변 생성 ---")
     question = state["question"]
     documents = state["documents"]
+    chat_history = state.get("chat_history", [])
+    is_new_topic = state.get("is_new_topic", True)
 
     # 프롬프트를 정의합니다.
     prompt = ChatPromptTemplate.from_messages([
         ("system",
          "당신은 질문-답변(Question-Answering)을 수행하는 AI 어시턴트입니다. "
-         "제공된 문서를 바탕으로 사용자의 질문에 대해 명확하고 간결하게 답변해주세요."),
+         "제공된 문서와 이전 대화 내용을 바탕으로 사용자의 질문에 대해 명확하고 간결하게 답변해주세요."),
+        MessagesPlaceholder(variable_name="chat_history"),
         ("user",
-         f"## 문서:\n\n---\n\n{{documents}}\n\n---\n\n## 질문:\n{{question}}")
+         "## 문서:\n\n---\n\n{documents}\n\n---\n\n## 질문:\n{question}")
     ])
 
     # LLM 모델을 정의합니다.
@@ -65,9 +116,23 @@ async def generate_answer_node(state: GraphState):
     # 프롬프트와 LLM을 연결합니다(LCEL).
     chain = prompt | llm
 
+    # 새로운 주제인 경우, 대화 기록을 비워서 전달합니다.
+    effective_history = chat_history if not is_new_topic else []
+
+    # 대화 기록의 형식을 LangChain 모델이 이해할 수 있는 형태로 변환합니다.
+    history_messages = []
+    for msg in effective_history:
+        if msg.get("role") == "user":
+            history_messages.append(HumanMessage(content=msg.get("content")))
+        elif msg.get("role") == "assistant":
+            history_messages.append(AIMessage(content=msg.get("content")))
+
     # LLM을 호출하여 답변을 생성합니다.
-    generation = await chain.ainvoke(
-        {"documents": "\n\n".join(documents), "question": question})
+    generation = await chain.ainvoke({
+        "documents": "\n\n".join(documents),
+        "question": question,
+        "chat_history": history_messages
+    })
     print(f"💬 생성된 답변: {generation.content[:100]}...")
 
     return {"generation": generation.content}
@@ -117,15 +182,36 @@ async def rewrite_question_node(state: GraphState):
     """
     print("--- 🔄 4. 질문 재작성 ---")
     question = state["question"]
+    chat_history = state.get("chat_history", [])
+    is_new_topic = state.get("is_new_topic", True)
 
-    prompt = ChatPromptTemplate.from_messages([
-        ("system",
-         "당신은 사용자 질문을 더 나은 검색어(search query)로 변환해주는 AI 어시턴트입니다."
-         "원래 질문의 핵심 의도는 유지하면서, RAG 검색 시스템이 더 관련성 높은 문서를 찾을 수 있도록 질문을 재구성해주세요."
-         "재구성된 질문만 간결하게 반환해주세요."),
-        ("user", f"## 원래 질문:\n{question}\n\n"
-                 "이 질문을 RAG 검색에 더 적합하도록 재구성해주세요.")
-    ])
+    # 새로운 주제이거나 대화 기록이 없으면, 현재 질문만으로 재작성합니다.
+    if is_new_topic:
+        prompt = ChatPromptTemplate.from_messages([
+            ("system",
+             "당신은 사용자 질문을 더 나은 검색어(search query)로 변환해주는 AI 어시턴트입니다."
+             "원래 질문의 핵심 의도는 유지하면서, RAG 검색 시스템이 더 관련성 높은 문서를 찾을 수 있도록 질문을 재구성해주세요."
+             "재구성된 질문만 간결하게 반환해주세요."),
+            ("user", f"## 원래 질문:\n{question}\n\n"
+                     "이 질문을 RAG 검색에 더 적합하도록 재구성해주세요.")
+        ])
+    # 기존 주제가 이어지는 경우, 대화 기록을 함께 사용합니다.
+    else:
+        # 대화 기록을 문자열로 변환하여 프롬프트에 포함합니다.
+        history_str = "\n".join(
+            [f'{msg.get("role")}: {msg.get("content")}' for msg in chat_history]
+        )
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system",
+             "당신은 사용자 질문을 더 나은 검색어(search query)로 변환해주는 AI 어시턴트입니다."
+             "원래 질문의 핵심 의도는 유지하면서, 이전 대화의 맥락을 참고하여 RAG 검색 시스템이 더 관련성 높은 문서를 찾을 수 있도록 질문을 재구성해주세요."
+             "재구성된 질문만 간결하게 반환해주세요."),
+            ("user", f"## 이전 대화:\n{history_str}\n\n"
+                     f"## 현재 질문:\n{question}\n\n"
+                     "이전 대화와 현재 질문을 바탕으로 RAG 검색에 가장 적합한 질문을 하나로 재구성해주세요.")
+        ])
+
     llm = get_chat_model()
     chain = prompt | llm
 
@@ -164,13 +250,15 @@ def should_continue(state: GraphState):
 workflow = StateGraph(GraphState)
 
 # 노드들을 그래프에 추가합니다.
+workflow.add_node("classify_topic", classify_topic_node)
 workflow.add_node("retrieve", retrieve_documents_node)
 workflow.add_node("generate", generate_answer_node)
 workflow.add_node("grade", grade_answer_node)
 workflow.add_node("rewrite", rewrite_question_node)
 
 # 엣지들을 그래프에 추가하여 노드 간의 흐름을 정의합니다.
-workflow.set_entry_point("retrieve")  # 시작점 설정
+workflow.set_entry_point("classify_topic")  # 시작점 변경
+workflow.add_edge("classify_topic", "retrieve")
 workflow.add_edge("retrieve", "generate")
 workflow.add_edge("generate", "grade")
 
@@ -196,13 +284,37 @@ app = workflow.compile()
 async def run_langgraph_agent(user_query: str, session_id: str = None) -> str:
     """
     사용자 질문을 받아 langgraph로 구성된 에이전트를 실행하고 최종 답변을 반환합니다.
-    (세션 ID는 현재 사용되지 않지만, `run_agent` 와의 호환성을 위해 유지합니다.)
+    session_id를 사용하여 대화 기록을 관리합니다.
     """
-    inputs = {"question": user_query}
-    final_state = await app.ainvoke(inputs)
+    # 1. 대화 기록 관리자 및 이전 기록 로드
+    history = get_history_store()
+    past_messages = []
+    if session_id:
+        print(
+            f"🧠 세션 '{session_id}'에서 이전 대화 기록을 로드합니다 (최대 {MAX_CONVERSATION_HISTORY_MESSAGES}개).")
+        past_messages = history.get_messages(session_id)[
+            -MAX_CONVERSATION_HISTORY_MESSAGES:]
 
-    # 최종 상태에서 생성된 답변을 반환합니다.
-    return final_state["generation"]
+    # 2. 그래프 실행을 위한 입력값 구성
+    # is_new_topic은 첫 노드에서 결정되므로 여기서 초기화할 필요가 없습니다.
+    inputs = {"question": user_query, "chat_history": past_messages}
+
+    # 3. LangGraph 에이전트 실행
+    final_state = await app.ainvoke(inputs)
+    final_answer = final_state["generation"]
+
+    # 4. 대화 기록 저장
+    if session_id:
+        new_messages = [
+            {"role": "user", "content": user_query},
+            {"role": "assistant", "content": final_answer}
+        ]
+        history.add_messages(session_id, new_messages)
+        print(
+            f"💾 세션 '{session_id}'에 대화 기록 {len(new_messages)}개 저장 완료")
+
+    # 5. 최종 답변 반환
+    return final_answer
 
 
 # 이 파일이 직접 실행될 때 테스트를 위한 코드입니다.
