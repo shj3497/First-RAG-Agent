@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "Megazone MCP - Local": {
+      "command": "/Users/fin01-hjshim/Desktop/my-project/megazone-cloud-mcp/venv/bin/python",
+      "args": [
+        "/Users/fin01-hjshim/Desktop/my-project/megazone-cloud-mcp/server_local.py"
+      ],
+      "env": {
+        "OPENAI_API_KEY": ""
+      }
+    },
+    "Megazone MCP - SSE": {
+      "type": "sse",
+      "url": "http://10.90.1.239:8001"
+    }
+  }
+}

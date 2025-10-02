@@ -142,25 +142,32 @@
 - 이 도구는 `rag_search_tool`의 성능을 API 서버와 분리하여 독립적으로 테스트하고 디버깅하는 데 사용된다.
 - 스크립트는 내부적으로 `rag_search_tool`의 `execute` 메서드를 호출하여 결과를 가져와 사용자에게 보여준다.
 
-### Step 4: FastMCP를 이용한 모듈화된 MCP 서버 구축
+### Step 4: MCP 서버 모드 분리 및 실행 방식 정의
 
-- **목표**: 기존 FastAPI 서버에 **FastMCP**를 통합하여 외부 AI 어시스턴트(Cursor 등)와 연동 가능한 MCP 서버 기능을 추가합니다. 이때, MCP 관련 코드는 `mcp_entry.py` 파일에 **모듈화**하여 관리하고, 메인 서버 실행 시(`uvicorn main:app`) 자동으로 통합되어 실행되도록 합니다.
+- **목표**: 프로젝트의 사용 목적에 따라 세 가지 다른 모드로 서버를 실행할 수 있도록 구조를 분리하여, 로컬 개발 효율성과 서버 배포 유연성을 동시에 확보한다.
 
-- **핵심 로직**:
+- **분리된 실행 파일**:
 
-  1.  `mcp_entry.py` 파일에 MCP 엔드포인트들을 관리할 FastAPI `APIRouter`를 생성합니다.
-  2.  생성된 라우터에 `FastMCP`를 사용하여 MCP 표준 규격에 맞는 엔드포인트(예: `/info`, `/request`)를 등록하고, 요청 처리 로직을 `core.agent.run_agent` 함수와 직접 연결합니다. 통신 방식은 SSE(Server-Sent Events)를 사용합니다.
-  3.  `main.py` 파일에서 `mcp_entry.py`에 정의된 `APIRouter`를 임포트합니다.
-  4.  메인 `FastAPI` 앱 인스턴스에 `app.include_router()`를 사용하여 임포트한 MCP 라우터를 등록합니다.
-  5.  결과적으로 `uvicorn main:app --reload` 단일 명령어로 서버를 실행하면, `main.py`의 REST API와 `mcp_entry.py`의 MCP 기능이 모두 활성화된 통합 서버가 실행됩니다.
+  1.  **`server_local.py` (stdio 방식)**
 
-- **구현 파일**:
+      - **역할**: 로컬 개발 전용 서버. Cursor와 같은 MCP 클라이언트와 표준 입출력(stdio)을 통해 직접 통신한다.
+      - **특징**: 네트워크 설정(IP, 포트)이 필요 없어 가장 간단하고 빠르다. 외부에서 접속은 불가능하다.
+      - **실행**: `python server_local.py`
 
-  - `mcp_entry.py`: MCP 관련 라우터(`APIRouter`)와 FastMCP 설정, 에이전트 연동 로직을 작성합니다.
-  - `main.py`: `mcp_entry.py`에서 생성한 라우터를 가져와 메인 앱에 등록하는 코드를 추가합니다.
+  2.  **`server_sse.py` (SSE 방식)**
+
+      - **역할**: 원격 접속용 MCP 서버. HTTP 기반의 SSE(Server-Sent Events) 프로토콜을 사용하여 통신한다.
+      - **특징**: 서버에 배포 후, 외부의 다른 사용자가 IP 주소와 포트를 통해 접속할 수 있다.
+      - **실행**: `python server_sse.py` 또는 `uvicorn server_sse:mcp_sse_app`
+
+  3.  **`main.py` (REST API)**
+      - **역할**: 순수 REST API 서버. 웹 프론트엔드나 다른 외부 서비스와의 연동을 위한 HTTP 엔드포인트(예: `/query`)를 제공한다.
+      - **특징**: MCP와는 분리된 일반적인 웹 API 서버의 역할을 수행한다.
+      - **실행**: `uvicorn main:app`
 
 - **의의**:
-  - 이 구조는 기능별로 코드를 다른 파일에 분리하여 프로젝트의 가독성과 유지보수성을 높이는 동시에, 단일 진입점을 통해 전체 애플리케이션을 실행하는 FastAPI의 모범적인 프로젝트 구성 방식을 따릅니다.
+  - 이 구조는 각 서버의 역할을 명확하게 분리하여 코드의 복잡도를 낮추고 유지보수성을 향상시킨다.
+  - 로컬 개발 환경과 실제 서버 배포 환경의 요구사항을 모두 충족시키는 유연한 아키텍처를 구현한다.
 
 ### Step 5: 고도화된 RAG 검색 전략 (하이브리드 검색)
 
